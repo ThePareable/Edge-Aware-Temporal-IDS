@@ -1,0 +1,5 @@
+{
+  "classes": ["BENIGN", "Bot", "DDoS", "PortScan", "BruteForce", "SQLi", "XSS", "Infiltration", "Malware", "DataExfiltration"],
+  "num_classes": 10,
+  "description": "Example metadata for prepared datasets. Edit to match your experiment."
+}

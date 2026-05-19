@@ -1,0 +1,22 @@
+# Do not commit large models, pickles and datasets
+*.pkl
+*.pt
+*.pth
+*.ckpt
+
+# runtime and outputs
+src/runs/
+src/outputs/
+data/raw/
+data/processed/
+
+# python
+__pycache__/
+*.pyc
+
+# virtualenvs
+trainenv/
+.venv/
+
+# editor temp
+.vscode/
