@@ -1,0 +1,35 @@
+{
+  "classes": [
+    "ARP-SPOOF",
+    "BENIGN",
+    "DDOS-ICMP",
+    "EXPLOITING-FTP",
+    "FTP-BRUTE-FORCE",
+    "PORT-SCANNING",
+    "SQL-INJECTION",
+    "SSH-BRUTE-FORCE",
+    "SYN-FLOOD",
+    "XSS"
+  ],
+  "num_classes": 10,
+  "benign_index": 1,
+  "in_dim": 60,
+  "edge_dim": 60,
+  "tgat": {
+    "in_dim": 16,
+    "edge_dim": 60,
+    "hidden_dim": 256,
+    "time_dim": 64,
+    "num_layers": 3,
+    "dropout": 0.0
+  },
+  "gclstm": {
+    "in_dim": 60,
+    "hidden": 128,
+    "gcn_layers": 2,
+    "lstm_hidden": 128,
+    "dropout": 0.0
+  },
+  "gclstm_steps": 3,
+  "thresholds": [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
+}
