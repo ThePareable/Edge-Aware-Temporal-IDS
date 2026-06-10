@@ -1,0 +1,149 @@
+import numpy as np
+import pandas as pd
+import torch
+from torch_geometric.data import Data
+from collections import defaultdict
+from graph_design import Node
+
+
+class SimpleGraphBuilder:
+    def __init__(self, node_feature_dim: int = 16, edge_feature_dim: int = 60):
+        self.node_feature_dim = node_feature_dim
+        self.edge_feature_dim = edge_feature_dim
+
+        ]
+        assert len(self.edge_feature_cols) == 60
+
+    def build_graph(self, flows_df: pd.DataFrame, y=None) -> Data:
+        nodes = self._create_nodes(flows_df)
+        node_to_idx = {node: idx for idx, node in enumerate(nodes)}
+
+        edge_index, edge_attr, edge_times = self._create_edges(flows_df, node_to_idx)
+        node_features = self._create_node_features(flows_df, node_to_idx, len(nodes))
+        node_times = self._compute_node_times(flows_df, node_to_idx, len(nodes))
+
+        x = torch.tensor(node_features, dtype=torch.float32)
+        edge_index = torch.tensor(edge_index, dtype=torch.long)
+        edge_attr = torch.tensor(edge_attr, dtype=torch.float32) if len(edge_attr) else torch.zeros((0, 60), dtype=torch.float32)
+        edge_time = torch.tensor(edge_times, dtype=torch.float32) if len(edge_times) else torch.zeros((0,), dtype=torch.float32)
+        node_time = torch.tensor(node_times, dtype=torch.float32)
+
+        data = Data(
+            x=x,
+            edge_index=edge_index,
+            edge_attr=edge_attr,
+            edge_time=edge_time,
+            node_time=node_time,
+        )
+        if y is not None:
+            # y can be int (multiclass) or float (binary)
+            if isinstance(y, float):
+                data.y = torch.tensor([y], dtype=torch.float32)
+            else:
+                data.y = torch.tensor([int(y)], dtype=torch.long)
+        return data
+
+    def _parse_node_string(self, node_str: str) -> Node:
+        ip, port = node_str.rsplit(":", 1)
+        return Node(ip=ip, port=int(port))
+
+    def _create_nodes(self, flows_df: pd.DataFrame):
+        nodes = set()
+        for _, flow in flows_df.iterrows():
+            src = flow["src_node"]
+            dst = flow["dst_node"]
+            if isinstance(src, str):
+                src = self._parse_node_string(src)
+            if isinstance(dst, str):
+                dst = self._parse_node_string(dst)
+            nodes.add(src)
+            nodes.add(dst)
+        return sorted(list(nodes), key=lambda n: (n.ip, n.port))
+
+    def _create_edges(self, flows_df: pd.DataFrame, node_to_idx: dict):
+        edge_index = [[], []]
+        edge_attr = []
+        edge_times = []
+
+        for _, flow in flows_df.iterrows():
+            src = flow["src_node"]
+            dst = flow["dst_node"]
+            if isinstance(src, str):
+                src = self._parse_node_string(src)
+            if isinstance(dst, str):
+                dst = self._parse_node_string(dst)
+
+            edge_index[0].append(node_to_idx[src])
+            edge_index[1].append(node_to_idx[dst])
+
+            features = [float(flow[col]) for col in self.edge_feature_cols]
+            edge_attr.append(features)
+
+            edge_times.append(float(flow["start_time"]))
+
+        return edge_index, edge_attr, edge_times
+
+    def _create_node_features(self, flows_df, node_to_idx, num_nodes: int):
+        node_features = np.zeros((num_nodes, self.node_feature_dim), dtype=float)
+        node_stats = defaultdict(lambda: {
+            "in_packets": 0.0, "out_packets": 0.0,
+            "in_bytes": 0.0, "out_bytes": 0.0,
+            "in_connections": 0.0, "out_connections": 0.0,
+            "syn_count": 0.0, "rst_count": 0.0,
+        })
+
+        for _, flow in flows_df.iterrows():
+            src = flow["src_node"]
+            dst = flow["dst_node"]
+            if isinstance(src, str):
+                src = self._parse_node_string(src)
+            if isinstance(dst, str):
+                dst = self._parse_node_string(dst)
+
+            node_stats[src]["out_packets"] += float(flow["packet_count"])
+            node_stats[src]["out_bytes"] += float(flow["total_bytes"])
+            node_stats[src]["out_connections"] += 1.0
+            node_stats[src]["syn_count"] += float(flow.get("syn_count", 0.0))
+
+            node_stats[dst]["in_packets"] += float(flow["packet_count"])
+            node_stats[dst]["in_bytes"] += float(flow["total_bytes"])
+            node_stats[dst]["in_connections"] += 1.0
+            node_stats[dst]["rst_count"] += float(flow.get("rst_count", 0.0))
+
+        for node, idx in node_to_idx.items():
+            stats = node_stats[node]
+            out_conns = stats["out_connections"]
+            in_conns = stats["in_connections"]
+            activity_ratio = out_conns / (in_conns + 1.0)
+
+            feats = [
+                stats["out_packets"], stats["in_packets"],
+                stats["out_bytes"], stats["in_bytes"],
+                stats["out_connections"], stats["in_connections"],
+                1.0 if node.port < 1024 else 0.0,
+                1.0 if node.port == 22 else 0.0,
+                1.0 if node.port in (80, 443) else 0.0,
+                stats["syn_count"], stats["rst_count"],
+                activity_ratio,
+            ]
+            if len(feats) < self.node_feature_dim:
+                feats += [0.0] * (self.node_feature_dim - len(feats))
+            node_features[idx] = np.array(feats[: self.node_feature_dim], dtype=float)
+
+        return node_features
+
+    def _compute_node_times(self, flows_df, node_to_idx, num_nodes: int):
+        node_times = np.zeros(num_nodes, dtype=float)
+        for _, flow in flows_df.iterrows():
+            src = flow["src_node"]
+            dst = flow["dst_node"]
+            if isinstance(src, str):
+                src = self._parse_node_string(src)
+            if isinstance(dst, str):
+                dst = self._parse_node_string(dst)
+
+            t = float(flow["end_time"])
+            node_times[node_to_idx[src]] = max(node_times[node_to_idx[src]], t)
+            node_times[node_to_idx[dst]] = max(node_times[node_to_idx[dst]], t)
+
+        return node_times
